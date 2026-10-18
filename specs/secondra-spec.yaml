@@ -1,0 +1,855 @@
+# =============================================================================
+# Secondra — Spec-Kit (fuente de la verdad técnica)
+# =============================================================================
+# Propósito: contrato único para generación y revisión de código (.NET 8 API,
+#            Expo / React Native), pruebas de contrato y validación en CI.
+# Convención: los cambios de modelo o API incrementan `specVersion` y se
+#             documentan en `changelog` (entrada corta por versión).
+# =============================================================================
+
+meta:
+  name: Secondra
+  specId: secondra-core
+  specVersion: "1.8.0"
+  openapiCompatible: "3.1"
+  description: >
+    Economía circular basada en red de confianza entre Guardianes: credibilidad del dueño (no autenticidad
+    del objeto). Protocolo de Respaldo del Guardián (GuardianBacking), niveles de confianza y respaldos
+    sociales. Catálogo de artículos, JWT, creación de ítems con Bearer, política de navegación del cliente.
+
+changelog:
+  - version: "1.8.0"
+    summary: >
+      GET /users/me/backings: lista de respaldos recibidos por el Guardián autenticado.
+      DTO GuardianBackingReceived (nombre y nivel de quien da fe); orden createdAt descendente.
+  - version: "1.7.0"
+    summary: >
+      Pivot de negocio: Protocolo de Respaldo del Guardián (sin validación de productos). Entidad
+      GuardianBacking; User extendido con trustLevel, backingCount, isIdentityVerified; enum TrustLevel;
+      POST respaldo y GET perfil de confianza; regla automática de nivel cada 5 respaldos distintos.
+  - version: "1.6.0"
+    summary: >
+      Sección ui_standards: cimientos visuales (spacing 8px, radio 12px, colores primary/background/text,
+      tipografía Inter). Fuente única de verdad para diseño; client.ui alineado y complementa con tokens extendidos.
+  - version: "1.5.0"
+    summary: >
+      Tokens de UI del cliente (paleta Secondra, ancho máximo web 800px, radio 12px, espaciado base 8px);
+      implementación en frontend/constants/theme.ts.
+  - version: "1.4.0"
+    summary: >
+      Regla de negocio de contraseñas en registro: mínimo 8 caracteres, al menos una mayúscula
+      y al menos un dígito; validación en spec, backend y frontend.
+  - version: "1.3.0"
+    summary: >
+      Política de acceso global del cliente (Expo Router): rutas privadas por defecto;
+      únicas rutas públicas /login y /register; sin JWT válido no se renderiza la capa de negocio.
+  - version: "1.2.0"
+    summary: >
+      JWT (POST /auth/login), User.PasswordHash, seguridad en POST /items,
+      DTOs de login y registro con contraseña; arquitectura de seguridad documentada.
+  - version: "1.1.0"
+    summary: Entidad User, DTO RegisterUserRequest, POST /auth/register y validaciones.
+  - version: "1.0.0"
+    summary: Definición inicial de Item, GET/POST /items y reglas de validación.
+
+# -----------------------------------------------------------------------------
+# Estándares de UI — Single Source of Truth (capa Business / Design)
+# -----------------------------------------------------------------------------
+# Toda implementación visual del cliente debe derivar de ui_standards. Los tokens extendidos
+# en `client.ui.tokens` complementan (superficies secundarias, bordes, estados) sin contradecir estos cimientos.
+ui_standards:
+  description: >
+    Cimientos visuales de Secondra: economía circular, interfaz limpia y acción principal en verde corporativo.
+  spacing:
+    basePx: 8
+    rule: >
+      Espaciado en múltiplos del base (8, 16, 24, 32, 40, 48, …) para padding, margin y gap.
+  borderRadius:
+    defaultPx: 12
+    rule: >
+      Radio por defecto para tarjetas, campos de formulario, botones y contenedores principales.
+  colors:
+    primary: "#2ecc71"
+    background: "#ffffff"
+    text: "#2c3e50"
+  typography:
+    fontFamily: "Inter, sans-serif"
+    fallback: "sans-serif"
+    rule: >
+      Familia principal Inter con pila genérica sans-serif; cargar Inter en web (font-face o proveedor) y equivalente en nativo.
+
+# -----------------------------------------------------------------------------
+# Negocio — Protocolo de Respaldo del Guardián (capa Business)
+# -----------------------------------------------------------------------------
+guardian_trust:
+  description: >
+    Secondra no certifica objetos; fortalece la credibilidad del Guardián mediante respaldos entre pares.
+    Cada respaldo es una relación (quién da fe → quién recibe) con comentario opcional.
+  protocolName: Protocolo de Respaldo del Guardián
+  goldenRule: >
+    La credibilidad del Guardián es el activo más valioso. Un usuario solo es confiable si otros miembros
+    de la comunidad dan fe de su identidad y honestidad.
+  trustLevelRule: >
+    El nivel de confianza (trustLevel) se recalcula automáticamente según el número de respaldos recibidos
+    de usuarios distintos: 0–4 Novato; 5–9 Vecino Confiable; 10+ Guardián de Honor (umbrales por versión).
+
+# -----------------------------------------------------------------------------
+# Arquitectura de seguridad (capa Architecture)
+# -----------------------------------------------------------------------------
+security:
+  description: >
+    La API usa JSON Web Tokens (JWT) firmados por el backend. El cliente envía
+    el token en cada petición protegida mediante el encabezado estándar
+    Authorization con esquema Bearer. El transporte debe ser HTTPS en producción.
+
+  jwt:
+    headerName: Authorization
+    headerValuePattern: "Bearer <token>"
+    tokenFormat: JWT
+    claimsMinimum:
+      - sub  # identificador de usuario (User.Id)
+      - exp  # expiración
+      - iat  # emitido en (opcional pero recomendado)
+    notes:
+      - El secreto de firma y la audiencia/emisor se configuran por entorno (no van en el spec).
+      - Nunca registrar ni devolver el token en logs o respuestas de error con cuerpo genérico.
+
+  schemes:
+    bearerJwt:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: Token obtenido exclusivamente vía POST /auth/login (200).
+
+  authorizationRequired:
+    - method: POST
+      path: /items
+      summary: Creación de tesoros (artículos); requiere usuario autenticado.
+      headers:
+        - name: Authorization
+          required: true
+          value: "Bearer <accessToken>"
+      responsesOnFailure:
+        "401":
+          description: Sin token, token inválido o expirado.
+        "403":
+          description: Token válido pero sin permiso para la operación (reservado si aplica RBAC futuro).
+    - method: POST
+      path: /guardians/{targetGuardianId}/backings
+      summary: Protocolo de Respaldo del Guardián; solo usuarios autenticados.
+    - method: GET
+      path: /users/me
+      summary: Perfil del usuario actual con métricas de confianza.
+    - method: GET
+      path: /users/me/backings
+      summary: Lista de respaldos recibidos por el usuario autenticado.
+
+# -----------------------------------------------------------------------------
+# Cliente — navegación y política de acceso global (Blindaje)
+# -----------------------------------------------------------------------------
+# Alineado a la capa Architecture: el shell del cliente (Expo Router) aplica esta política
+# antes de montar UI de negocio. La API REST mantiene sus propias reglas en `security`.
+client:
+  router: expo-router
+  accessPolicy:
+    description: >
+      Política de acceso global a la navegación. Por defecto todo el árbol de rutas se considera
+      privado; solo se permiten sin sesión las rutas explícitamente listadas como públicas.
+    defaultVisibility: private
+    publicRoutes:
+      exactPaths:
+        - /login
+        - /register
+    notes:
+      - Cualquier otra ruta (incluido / o index) se trata como privada salvo que una versión
+        futura del spec añada excepciones adicionales.
+      - >
+        JWT válido: token presente, firma verificable y claim exp no superado.
+
+  businessLayer:
+    description: >
+      Capa de Negocio Secondra: catálogo de tesoros (ítems), publicación, confianza entre Guardianes
+      (Protocolo de Respaldo del Guardián, sellos de reputación), filtros y acciones del usuario.
+      No incluye pantallas puramente de autenticación ni layouts vacíos de redirect.
+    mustNotRenderWithoutValidJwt: true
+    rule: >
+      Si no existe un JWT válido, el sistema no debe renderizar ningún componente de la capa
+      de Negocio (ni pantallas completas ni fragmentos: listados, formularios de tesoros, chips
+      de categoría ligados al catálogo, etc.). En su lugar, el flujo debe limitarse a autenticación
+      (p. ej. redirección a /login o /register) o a un estado de carga que no monte UI de negocio.
+
+  implementationHints:
+    - Usar un guard de navegación (layout protegido, Stack.Protected o equivalente) que lea el
+      token antes de renderizar hijos de negocio.
+    - Evitar fetch de datos de negocio y evitar hidratar estado de catálogo hasta tener sesión válida.
+
+  ui:
+    description: >
+      Diseño BMAD (economía circular, minimalista). Cimientos obligatorios: sección `ui_standards` (SSOT).
+      El cliente web limita el ancho del contenido; botones y CTAs usan el verde Secondra como acción principal.
+    tokens:
+      palette:
+        primary: "#2ecc71"
+        primaryDark: "#27ae60"
+        primaryLight: "#eafaf1"
+        background: "#ffffff"
+        surface: "#ffffff"
+        text: "#2c3e50"
+        canvasMuted: "#f8f9fa"
+        muted: "#636e72"
+        border: "#dfe6e9"
+        danger: "#e74c3c"
+        errorBackground: "#fdecea"
+        errorBorder: "#f5c6cb"
+        onPrimary: "#ffffff"
+        shadow: "#000000"
+        whatsappAccent: "#25D366"
+        whatsappSoft: "#f0fdf4"
+        trustSecurity: "#1e3a5f"
+        trustSecuritySoft: "#e8eef5"
+        honorGold: "#c9a227"
+        honorGoldSoft: "#faf6e8"
+        info: "#2980b9"
+        infoSoft: "#eaf4fb"
+        warnSoft: "#fdf0ef"
+        warn: "#c0392b"
+      layout:
+        maxContentWidthWebPx: 800
+        wideBreakpointPx: 720
+      radiusPx: 12  # espejo de ui_standards.borderRadius.defaultPx
+      spacingBasePx: 8  # espejo de ui_standards.spacing.basePx
+
+# -----------------------------------------------------------------------------
+# Entidades (dominio / persistencia)
+# -----------------------------------------------------------------------------
+entities:
+  Item:
+    description: Artículo publicado para venta o intercambio.
+    idStrategy: uuid
+    fields:
+      Id:
+        type: uuid
+        mapsToDotnet: Guid
+        mapsToTypeScript: string
+        readOnlyOnCreate: true
+        description: Identificador único generado por el servidor.
+      Name:
+        type: string
+        maxLength: 200
+        mapsToDotnet: string
+        mapsToTypeScript: string
+        description: Título corto del artículo.
+      Description:
+        type: string
+        maxLength: 4000
+        nullable: true
+        mapsToDotnet: string
+        mapsToTypeScript: string | null
+        description: Detalle opcional del artículo.
+      Price:
+        type: decimal
+        precision: 18
+        scale: 2
+        minimumExclusive: 0
+        mapsToDotnet: decimal
+        mapsToTypeScript: number
+        description: Precio en moneda local; debe ser estrictamente mayor que cero.
+      Category:
+        $ref: "#/enums/ItemCategory"
+        mapsToDotnet: ItemCategory
+        mapsToTypeScript: ItemCategory
+        description: Categoría del artículo.
+      Condition:
+        $ref: "#/enums/ItemCondition"
+        mapsToDotnet: ItemCondition
+        mapsToTypeScript: ItemCondition
+        description: Estado físico del artículo.
+      Location:
+        type: string
+        maxLength: 500
+        mapsToDotnet: string
+        mapsToTypeScript: string
+        description: Ubicación o zona para intercambio (texto libre en v1).
+      WhatsApp:
+        type: string
+        minLength: 8
+        maxLength: 32
+        mapsToDotnet: string
+        mapsToTypeScript: string
+        description: Número de contacto WhatsApp; validación estricta (E.164) opcional en versiones futuras.
+      CreatedAt:
+        type: datetime
+        format: iso8601
+        readOnlyOnCreate: true
+        mapsToDotnet: DateTimeOffset
+        mapsToTypeScript: string
+        description: Marca de tiempo UTC de creación; asignada por el servidor.
+
+  User:
+    description: Cuenta de persona en Secondra; contraseña almacenada solo como hash.
+    idStrategy: uuid
+    fields:
+      Id:
+        type: uuid
+        mapsToDotnet: Guid
+        mapsToTypeScript: string
+        readOnlyOnCreate: true
+        description: Identificador único del usuario.
+      Email:
+        type: string
+        format: email
+        maxLength: 254
+        unique: true
+        mapsToDotnet: string
+        mapsToTypeScript: string
+        description: Correo electrónico único (comparación normalizada en servidor).
+      PasswordHash:
+        type: string
+        maxLength: 512
+        mapsToDotnet: string
+        persistenceOnly: true
+        description: >
+          Hash de contraseña (p. ej. PBKDF2, Argon2 o bcrypt según implementación).
+          Solo persistencia; nunca se serializa en respuestas JSON ni en DTOs de salida.
+      FirstName:
+        type: string
+        maxLength: 100
+        mapsToDotnet: string
+        mapsToTypeScript: string
+        description: Nombre(s).
+      LastName:
+        type: string
+        maxLength: 100
+        mapsToDotnet: string
+        mapsToTypeScript: string
+        description: Apellido(s).
+      Phone:
+        type: string
+        minLength: 8
+        maxLength: 20
+        mapsToDotnet: string
+        mapsToTypeScript: string
+        description: Teléfono de contacto.
+      ZipCode:
+        type: string
+        maxLength: 20
+        mapsToDotnet: string
+        mapsToTypeScript: string
+        description: Código postal o equivalente.
+      CreatedAt:
+        type: datetime
+        format: iso8601
+        readOnlyOnCreate: true
+        mapsToDotnet: DateTimeOffset
+        mapsToTypeScript: string
+        description: Marca de tiempo UTC de alta de cuenta.
+      TrustLevel:
+        $ref: "#/enums/TrustLevel"
+        mapsToDotnet: TrustLevel
+        mapsToTypeScript: TrustLevel
+        description: Nivel de confianza derivado de respaldos recibidos (servidor).
+      BackingCount:
+        type: integer
+        minimum: 0
+        mapsToDotnet: int
+        mapsToTypeScript: number
+        description: Número de respaldos recibidos (usuarios distintos que dan fe).
+      IsIdentityVerified:
+        type: boolean
+        mapsToDotnet: bool
+        mapsToTypeScript: boolean
+        description: Indicador de verificación de identidad (futuro; por defecto false).
+
+  GuardianBacking:
+    description: >
+      Respaldo de un Guardián hacia otro: “dan fe” de identidad y honestidad. Un par (vouching, target)
+      solo puede existir una vez.
+    idStrategy: uuid
+    fields:
+      Id:
+        type: uuid
+        mapsToDotnet: Guid
+        mapsToTypeScript: string
+        readOnlyOnCreate: true
+      VouchingUserId:
+        type: uuid
+        mapsToDotnet: Guid
+        mapsToTypeScript: string
+        description: Usuario que otorga el respaldo.
+      TargetGuardianId:
+        type: uuid
+        mapsToDotnet: Guid
+        mapsToTypeScript: string
+        description: Guardián respaldado.
+      VouchText:
+        type: string
+        maxLength: 2000
+        nullable: true
+        mapsToDotnet: string
+        mapsToTypeScript: string | null
+        description: Comentario opcional del respaldo.
+      CreatedAt:
+        type: datetime
+        format: iso8601
+        readOnlyOnCreate: true
+        mapsToDotnet: DateTimeOffset
+        mapsToTypeScript: string
+
+# -----------------------------------------------------------------------------
+# Enumeraciones (única fuente para enums C# y unions TS)
+# -----------------------------------------------------------------------------
+enums:
+  TrustLevel:
+    description: Nivel de confianza visible en la comunidad.
+    values:
+      - Novato
+      - VecinoConfiable
+      - GuardianHonor
+  ItemCategory:
+    description: Categorías de catálogo (extensibles con nueva versión del spec).
+    values:
+      - Ropa
+      - Electronica
+      - Hogar
+      - Libros
+      - Deportes
+      - Otro
+  ItemCondition:
+    description: Estado del artículo.
+    values:
+      - Nuevo
+      - Bueno
+      - Regular
+
+# -----------------------------------------------------------------------------
+# API REST
+# -----------------------------------------------------------------------------
+api:
+  title: Secondra API
+  version: "1.8.0"
+  baseUrlTemplate: "{scheme}://{host}/v1"
+  defaultScheme: https
+  mediaType: application/json
+  naming:
+    jsonPropertyNaming: camelCase
+    pathSegmentCase: kebab-case
+
+  endpoints:
+    listItems:
+      method: GET
+      path: /items
+      operationId: listItems
+      summary: Lista artículos publicados.
+      security: []  # público (catálogo)
+      responses:
+        "200":
+          description: Colección de ítems.
+          body:
+            type: array
+            items:
+              $ref: "#/entities/Item"
+        "500":
+          description: Error interno del servidor.
+
+    createItem:
+      method: POST
+      path: /items
+      operationId: createItem
+      summary: Crea un nuevo artículo (tesoro).
+      security:
+        - bearerJwt: []
+      description: >
+        Requiere encabezado obligatorio Authorization Bearer con JWT válido emitido
+        por POST /auth/login. Sin token o con token inválido/expirado → 401.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/dto/CreateItemRequest"
+      responses:
+        "201":
+          description: Artículo creado.
+          headers:
+            Location:
+              description: URI del recurso creado.
+              schema:
+                type: string
+          body:
+            $ref: "#/entities/Item"
+        "400":
+          description: Solicitud inválida (validación fallida).
+        "401":
+          description: No autenticado o token inválido/expirado.
+        "500":
+          description: Error interno del servidor.
+
+    registerUser:
+      method: POST
+      path: /auth/register
+      operationId: registerUser
+      summary: Registra un nuevo usuario (contraseña → PasswordHash en servidor).
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/dto/RegisterUserRequest"
+      responses:
+        "201":
+          description: Usuario creado (sin incluir PasswordHash en el cuerpo).
+          headers:
+            Location:
+              description: URI del recurso creado.
+              schema:
+                type: string
+          body:
+            $ref: "#/dto/UserPublic"
+        "400":
+          description: Validación fallida (campos, formato de email o política de contraseña).
+        "409":
+          description: El email ya está registrado.
+        "500":
+          description: Error interno del servidor.
+
+    login:
+      method: POST
+      path: /auth/login
+      operationId: login
+      summary: Autenticación por email y contraseña; devuelve JWT y datos básicos del usuario.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/dto/LoginRequest"
+      responses:
+        "200":
+          description: Credenciales válidas; token listo para Authorization Bearer.
+          body:
+            $ref: "#/dto/LoginResponse"
+        "400":
+          description: Cuerpo inválido o campos faltantes.
+        "401":
+          description: Email o contraseña incorrectos (mensaje genérico recomendado).
+        "500":
+          description: Error interno del servidor.
+
+    createGuardianBacking:
+      method: POST
+      path: /guardians/{targetGuardianId}/backings
+      operationId: createGuardianBacking
+      summary: Registra un respaldo del usuario autenticado hacia otro Guardián.
+      security:
+        - bearerJwt: []
+      description: >
+        Solo usuarios autenticados. No se puede respaldar a uno mismo ni duplicar el par
+        (vouchingUserId, targetGuardianId).
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/dto/CreateGuardianBackingRequest"
+      responses:
+        "201":
+          description: Respaldo creado.
+          body:
+            $ref: "#/dto/GuardianBackingPublic"
+        "400":
+          description: Solicitud inválida (self-back, duplicado, texto largo).
+        "401":
+          description: No autenticado.
+        "404":
+          description: Guardián destino no existe.
+        "500":
+          description: Error interno.
+
+    getCurrentUser:
+      method: GET
+      path: /users/me
+      operationId: getCurrentUser
+      summary: Perfil público del usuario autenticado (incluye confianza).
+      security:
+        - bearerJwt: []
+      responses:
+        "200":
+          description: Usuario actual.
+          body:
+            $ref: "#/dto/UserPublic"
+        "401":
+          description: No autenticado.
+        "404":
+          description: Usuario no encontrado.
+        "500":
+          description: Error interno.
+
+    listMyReceivedBackings:
+      method: GET
+      path: /users/me/backings
+      operationId: listMyReceivedBackings
+      summary: Lista los respaldos recibidos por el Guardián autenticado.
+      security:
+        - bearerJwt: []
+      description: >
+        Respaldos donde targetGuardianId es el usuario actual, ordenados por createdAt
+        descendente. 200 con array vacío si nadie ha dado fe. Proyecta nombre y nivel
+        de quien respalda (no persiste campos extra).
+      responses:
+        "200":
+          description: Colección de respaldos recibidos.
+          body:
+            type: array
+            items:
+              $ref: "#/dto/GuardianBackingReceived"
+        "401":
+          description: No autenticado.
+        "500":
+          description: Error interno.
+
+# -----------------------------------------------------------------------------
+# DTOs (entrada/salida explícitos para generadores)
+# -----------------------------------------------------------------------------
+dto:
+  UserPublic:
+    description: Usuario expuesto en API (nunca incluye PasswordHash).
+    fields:
+      id: { $ref: "#/entities/User/fields/Id" }
+      email: { $ref: "#/entities/User/fields/Email" }
+      firstName: { $ref: "#/entities/User/fields/FirstName" }
+      lastName: { $ref: "#/entities/User/fields/LastName" }
+      phone: { $ref: "#/entities/User/fields/Phone" }
+      zipCode: { $ref: "#/entities/User/fields/ZipCode" }
+      createdAt: { $ref: "#/entities/User/fields/CreatedAt" }
+      trustLevel: { $ref: "#/entities/User/fields/TrustLevel" }
+      backingCount: { $ref: "#/entities/User/fields/BackingCount" }
+      isIdentityVerified: { $ref: "#/entities/User/fields/IsIdentityVerified" }
+
+  CreateGuardianBackingRequest:
+    description: Cuerpo opcional para POST respaldo; vouchText puede omitirse.
+    fields:
+      vouchText:
+        type: string
+        maxLength: 2000
+        nullable: true
+        description: Comentario del respaldo.
+
+  GuardianBackingPublic:
+    description: Respaldo persistido (sin datos sensibles adicionales).
+    fields:
+      id: { $ref: "#/entities/GuardianBacking/fields/Id" }
+      vouchingUserId: { $ref: "#/entities/GuardianBacking/fields/VouchingUserId" }
+      targetGuardianId: { $ref: "#/entities/GuardianBacking/fields/TargetGuardianId" }
+      vouchText: { $ref: "#/entities/GuardianBacking/fields/VouchText" }
+      createdAt: { $ref: "#/entities/GuardianBacking/fields/CreatedAt" }
+
+  GuardianBackingReceived:
+    description: >
+      Respaldo recibido por el Guardián actual, con proyección del nombre de quien da fe.
+      No añade campos de persistencia.
+    fields:
+      id: { $ref: "#/entities/GuardianBacking/fields/Id" }
+      vouchingUserId: { $ref: "#/entities/GuardianBacking/fields/VouchingUserId" }
+      targetGuardianId: { $ref: "#/entities/GuardianBacking/fields/TargetGuardianId" }
+      vouchText: { $ref: "#/entities/GuardianBacking/fields/VouchText" }
+      createdAt: { $ref: "#/entities/GuardianBacking/fields/CreatedAt" }
+      vouchingFirstName: { $ref: "#/entities/User/fields/FirstName" }
+      vouchingLastName: { $ref: "#/entities/User/fields/LastName" }
+      vouchingTrustLevel:
+        $ref: "#/enums/TrustLevel"
+        mapsToDotnet: TrustLevel
+        mapsToTypeScript: TrustLevel
+        description: Nivel de confianza de quien otorga el respaldo (sello compacto).
+
+  CreateItemRequest:
+    description: Carga útil para POST /items; sin Id ni CreatedAt (servidor).
+    fields:
+      name: { $ref: "#/entities/Item/fields/Name" }
+      description: { $ref: "#/entities/Item/fields/Description" }
+      price: { $ref: "#/entities/Item/fields/Price" }
+      category: { $ref: "#/entities/Item/fields/Category" }
+      condition: { $ref: "#/entities/Item/fields/Condition" }
+      location: { $ref: "#/entities/Item/fields/Location" }
+      whatsapp: { $ref: "#/entities/Item/fields/WhatsApp" }
+
+  RegisterUserRequest:
+    description: >
+      Carga útil para POST /auth/register. La contraseña en claro solo viaja en HTTPS;
+      el servidor calcula y guarda PasswordHash.
+    fields:
+      email: { $ref: "#/entities/User/fields/Email" }
+      password:
+        type: string
+        format: password
+        minLength: 8
+        maxLength: 128
+        description: >
+          Contraseña en texto plano en el transporte; nunca se almacena en claro.
+          Regla de negocio (registro): mínimo 8 caracteres, al menos una letra mayúscula
+          y al menos un dígito (validación alineada con Unicode en servidor: mayúsculas y dígitos estándar).
+      firstName: { $ref: "#/entities/User/fields/FirstName" }
+      lastName: { $ref: "#/entities/User/fields/LastName" }
+      phone: { $ref: "#/entities/User/fields/Phone" }
+      zipCode: { $ref: "#/entities/User/fields/ZipCode" }
+
+  LoginRequest:
+    description: >
+      Credenciales para POST /auth/login. El cliente envía JSON camelCase (email, password).
+      En servidor la contraseña en claro solo se usa para VerifyHashedPassword frente a User.PasswordHash
+      (hash con PBKDF2 mediante ASP.NET Identity PasswordHasher, mismo flujo que en registro).
+    fields:
+      email: { $ref: "#/entities/User/fields/Email" }
+      password:
+        type: string
+        format: password
+        description: Contraseña en texto plano sobre HTTPS; no se persiste en este DTO.
+
+  LoginResponse:
+    description: Respuesta exitosa de POST /auth/login.
+    fields:
+      accessToken:
+        type: string
+        description: JWT para el encabezado Authorization Bearer.
+      tokenType:
+        type: string
+        literal: Bearer
+        description: Tipo de token (siempre Bearer en v1.2).
+      expiresIn:
+        type: integer
+        description: Segundos hasta expiración del access token (opcional si el cliente usa solo exp del JWT).
+      user:
+        $ref: "#/dto/UserPublic"
+
+# -----------------------------------------------------------------------------
+# Reglas de validación (servidor obligatorio; cliente puede espejo UX)
+# -----------------------------------------------------------------------------
+validation:
+  global:
+    - rule: jsonPropertyNaming
+      value: camelCase
+  CreateItemRequest:
+    - field: name
+      rules:
+        - kind: required
+          message: El nombre es obligatorio.
+        - kind: notEmpty
+          message: El nombre no puede estar vacío.
+        - kind: maxLength
+          value: 200
+    - field: price
+      rules:
+        - kind: required
+        - kind: greaterThan
+          value: 0
+          message: El precio debe ser mayor que cero.
+    - field: category
+      rules:
+        - kind: required
+        - kind: enum
+          enumRef: "#/enums/ItemCategory"
+    - field: condition
+      rules:
+        - kind: required
+        - kind: enum
+          enumRef: "#/enums/ItemCondition"
+    - field: location
+      rules:
+        - kind: required
+        - kind: notEmpty
+    - field: whatsapp
+      rules:
+        - kind: required
+        - kind: notEmpty
+    - field: description
+      rules:
+        - kind: optional
+          # si se envía, maxLength 4000 aplicado por tipo
+
+  RegisterUserRequest:
+    - field: email
+      rules:
+        - kind: required
+          message: El correo es obligatorio.
+        - kind: email
+          message: Ingresa un correo electrónico válido.
+        - kind: maxLength
+          value: 254
+    - field: password
+      rules:
+        - kind: required
+          message: La contraseña es obligatoria.
+        - kind: minLength
+          value: 8
+          message: Mínimo 8 caracteres.
+        - kind: maxLength
+          value: 128
+        - kind: hasUppercaseLetter
+          message: La contraseña debe incluir al menos una letra mayúscula.
+        - kind: hasDigit
+          message: La contraseña debe incluir al menos un número.
+    - field: firstName
+      rules:
+        - kind: required
+          message: El nombre es obligatorio.
+        - kind: maxLength
+          value: 100
+    - field: lastName
+      rules:
+        - kind: required
+          message: El apellido es obligatorio.
+        - kind: maxLength
+          value: 100
+    - field: phone
+      rules:
+        - kind: required
+        - kind: minLength
+          value: 8
+        - kind: maxLength
+          value: 20
+    - field: zipCode
+      rules:
+        - kind: required
+        - kind: maxLength
+          value: 20
+
+  LoginRequest:
+    - field: email
+      rules:
+        - kind: required
+        - kind: email
+    - field: password
+      rules:
+        - kind: required
+        - kind: notEmpty
+
+# -----------------------------------------------------------------------------
+# Pistas para generación de código (opcional para herramientas)
+# -----------------------------------------------------------------------------
+codegen:
+  dotnet:
+    targetFramework: net8.0
+    suggestions:
+      - Use FluentValidation o validadores nativos alineados a `validation`.
+      - Map `Item` a entidad EF Core; `CreateItemRequest` a record/DTO de entrada.
+      - Exponer enums como tipos C# con nombres idénticos a `enums.*.values`.
+      - Middleware JWT en pipeline; [Authorize] o filtro equivalente en POST /items.
+      - No mapear PasswordHash a DTOs de salida; usar `UserPublic` o proyección explícita.
+  expo:
+    suggestions:
+      - Generar tipos TypeScript desde `entities` y `enums`.
+      - Formularios con esquema (p. ej. Zod) derivado de `validation`.
+      - Guardar accessToken de forma segura (SecureStore) y adjuntar Authorization en POST /items.
+      - >
+        Implementar client.accessPolicy del spec: rutas privadas por defecto; solo rutas públicas
+        /login y /register; layout protegido que no monte la capa de negocio sin JWT válido.
+
+# -----------------------------------------------------------------------------
+# Extensibilidad
+# -----------------------------------------------------------------------------
+extensions:
+  future:
+    - Refresh tokens y revocación; vínculo explícito `sellerId` / UserId en Item.
+    - Paginación y filtros en GET /items (query params versionados).
+    - Subida de imágenes a bucket S3 + URLs en el modelo.

@@ -1,0 +1,29 @@
+project: Secondra
+version: 1.0.0
+framework: BMAD
+
+# --- Capa: MODEL (Lo que guardamos) ---
+entities:
+  Item:
+    fields:
+      id: Guid
+      name: string (required, max 100)
+      price: decimal (required)
+      category: string (enum: Ropa, Electronica, Hogar, Libros, Deportes, Otro)
+      imageUrl: string (url)
+      createdAt: DateTime
+
+# --- Capa: ARCHITECTURE (Cómo se comunican) ---
+api:
+  base_url: http://localhost:5000
+  endpoints:
+    health: GET /health
+    items: 
+      list: GET /items
+      create: POST /items
+
+# --- Capa: DEPLOYMENT (Donde vive) ---
+infrastructure:
+  backend: .NET 8 (Kestrel 65s timeout)
+  frontend: Expo Hibrido (Web/Mobile)
+  database: PostgreSQL (Local: In-Memory)

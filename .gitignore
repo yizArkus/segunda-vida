@@ -1,0 +1,20 @@
+# Dependencias y compilados
+**/node_modules/
+**/bin/
+**/obj/
+backend/_out/
+backend/_out2/
+backend/_b/
+backend/_build_verify/
+
+# Secretos y entorno local
+**/.env
+**/.env*.local
+backend/appsettings.json
+
+# Herramientas locales
+.cursor/
+.DS_Store
+frontend/.gga/
+frontend/get_helm.sh
+frontend/.git-local/
