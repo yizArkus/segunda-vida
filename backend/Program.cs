@@ -171,8 +171,7 @@ app.MapPost("/guardians/{targetGuardianId:guid}/backings", async (
     return await backing.CreateAsync(vouchingUserId, targetGuardianId, req);
 }).RequireAuthorization();
 
-var port = Environment.GetEnvironmentVariable("PORT") ?? "10000";
-app.Run($"http://0.0.0.0:{port}");
+app.Run("http://localhost:5000");
 
 // --- JWT ---
 
