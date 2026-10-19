@@ -43,7 +43,7 @@ public sealed class AuthService
             await _db.SaveChangesAsync(cancellationToken);
         }
 
-        var (token, expiresIn) = _jwt.CreateToken(user);
+        var (token, expiresIn) = _jwt.CreateToken(us);
         return Results.Ok(new LoginResponseDto(token, "Bearer", expiresIn, ToPublic(user)));
     }
 
