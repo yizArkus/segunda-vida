@@ -17,6 +17,7 @@ builder.WebHost.ConfigureKestrel(options =>
 {
     options.Limits.KeepAliveTimeout = TimeSpan.FromSeconds(65);
     options.Limits.RequestHeadersTimeout = TimeSpan.FromSeconds(60);
+});
 
 builder.Services.ConfigureHttpJsonOptions(o =>
 {
