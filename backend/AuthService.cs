@@ -24,7 +24,7 @@ public sealed class AuthService
 
         if (string.IsNullOrEmpty(email) || string.IsNullOrEmpty(password))
             return Results.BadRequest(new { error = "Correo y contraseña son obligatorios." });
-        if (!IsValidEmail(email))
+        if (!IsValidEmail(ema))
             return Results.BadRequest(new { error = "Correo no válido." });
 
         var user = await _db.Users.FirstOrDefaultAsync(u => u.Email == email, cancellationToken);
